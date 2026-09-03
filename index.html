@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PontoTouchless - Controle de Ponto PWA</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2563eb">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+    <style>
+        body {
+            background-color: #f8fafc;
+            color: #0f172a;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            user-select: none;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between p-4 md:p-8 bg-slate-50">
+
+    <!-- Header / Navbar -->
+    <header class="w-full max-w-5xl mx-auto flex items-center justify-between bg-white p-4 rounded-2xl shadow-sm border border-slate-200 mb-6">
+        <div class="flex items-center gap-3">
+            <div class="p-2.5 bg-blue-600 text-white rounded-xl">
+                <i data-lucide="clock" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg text-slate-800 leading-tight">PontoTouchless</h1>
+                <p class="text-xs text-slate-500 font-medium" id="terminal-info">Terminal: TERM-01 (Fábrica)</p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-4">
+            <!-- Offline/Sync Status Badge -->
+            <div id="sync-status" class="hidden items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                <i data-lucide="wifi-off" class="w-4 h-4 text-amber-600"></i>
+                <span id="pending-count">Offline: 0 pendente(s)</span>
+            </div>
+
+            <!-- Current Time -->
+            <div class="text-right">
+                <div id="live-clock" class="text-2xl font-black text-slate-800 tracking-tight">00:00:00</div>
+                <div id="live-date" class="text-xs font-medium text-slate-500">01 de Janeiro de 2026</div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="w-full max-w-5xl mx-auto flex-1 flex flex-col md:flex-row gap-6 items-stretch">
+
+        <!-- Left Section: Biometric Video Feed -->
+        <section class="flex-1 bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col items-center justify-between relative overflow-hidden">
+            <div class="w-full flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2 text-slate-700 font-semibold text-sm">
+                    <i data-lucide="scan-face" class="w-5 h-5 text-blue-600"></i>
+                    <span>Reconhecimento Facial Touchless</span>
+                </div>
+                <span id="bio-status-badge" class="px-2.5 py-1 text-xs font-medium bg-emerald-50 text-emerald-700 rounded-full border border-emerald-200 flex items-center gap-1">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Câmera Ativa
+                </span>
+            </div>
+
+            <!-- Camera Viewport -->
+            <div class="relative w-full aspect-video bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center border-2 border-dashed border-slate-300">
+                <video id="webcam" autoplay playsinline muted class="w-full h-full object-cover transform -scale-x-100"></video>
+                <canvas id="overlay" class="absolute inset-0 w-full h-full transform -scale-x-100"></canvas>
+
+                <!-- Face Oval Guide Overlay -->
+                <div class="absolute inset-0 border-4 border-blue-500/30 rounded-full my-6 mx-auto w-48 h-64 pointer-events-none flex items-center justify-center">
+                    <div class="w-full h-full border-2 border-dashed border-blue-400/50 rounded-full animate-spin-slow"></div>
+                </div>
+
+                <!-- Alert Message Overlay inside Camera -->
+                <div id="camera-alert" class="hidden absolute bottom-4 left-4 right-4 bg-amber-500/90 backdrop-blur-md text-white p-3 rounded-lg text-sm text-center font-medium shadow-lg transition-all flex items-center justify-center gap-2">
+                    <i data-lucide="alert-triangle" class="w-5 h-5 shrink-0"></i>
+                    <span id="camera-alert-msg">Ajuste sua posição e remova acessórios (óculos/boné)</span>
+                </div>
+            </div>
+
+            <div class="w-full mt-4 flex items-center justify-between text-xs text-slate-500">
+                <p>Posicione seu rosto no centro da tela.</p>
+                <button id="btn-switch-manual" class="text-blue-600 font-semibold hover:underline flex items-center gap-1">
+                    <i data-lucide="keypad" class="w-4 h-4"></i>
+                    Digitar ID Manualmente
+                </button>
+            </div>
+        </section>
+
+        <!-- Right Section: Status, Confirmation or Keypad Container -->
+        <section id="side-panel" class="w-full md:w-96 bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-between">
+
+            <!-- Default Welcome Mode -->
+            <div id="panel-welcome" class="flex-1 flex flex-col items-center justify-center text-center p-4">
+                <div class="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600 mb-4">
+                    <i data-lucide="user-check" class="w-8 h-8"></i>
+                </div>
+                <h2 class="text-xl font-bold text-slate-800 mb-2">Aproxime-se do Terminal</h2>
+                <p class="text-slate-500 text-sm leading-relaxed mb-6">
+                    O registro é instantâneo e sem toque. Caso prefira ou enfrente dificuldades, utilize o ID funcional.
+                </p>
+                <button id="btn-open-id-modal" class="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl transition flex items-center justify-center gap-2">
+                    <i data-lucide="dialpad" class="w-5 h-5"></i>
+                    Digitar Código ID
+                </button>
+            </div>
+
+            <!-- Confirmation Mode (Shown for 2s after successful face/ID match) -->
+            <div id="panel-confirmation" class="hidden flex-1 flex flex-col items-center justify-center text-center p-4">
+                <div class="w-24 h-24 rounded-full overflow-hidden border-4 border-emerald-500 shadow-md mb-4 relative">
+                    <img id="confirm-user-photo" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E" alt="Foto Colaborador" class="w-full h-full object-cover">
+                </div>
+                <div class="inline-flex items-center gap-1 text-emerald-600 font-bold text-sm bg-emerald-50 px-3 py-1 rounded-full mb-2">
+                    <i data-lucide="check-circle" class="w-4 h-4"></i>
+                    Ponto Registrado com Sucesso!
+                </div>
+                <h3 id="confirm-user-name" class="text-xl font-bold text-slate-800">Nome do Funcionario</h3>
+                <p id="confirm-user-code" class="text-sm font-medium text-slate-500 mb-4">ID: 000000</p>
+                <div id="confirm-timestamp" class="text-xs bg-slate-100 px-3 py-1.5 rounded-lg text-slate-600 font-mono">00/00/2026 - 00:00:00</div>
+            </div>
+
+            <!-- Error / Lock Message Panel -->
+            <div id="panel-error" class="hidden flex-1 flex flex-col items-center justify-center text-center p-4">
+                <div id="error-icon-box" class="w-16 h-16 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-600 mb-4">
+                    <i data-lucide="shield-alert" class="w-8 h-8"></i>
+                </div>
+                <h3 id="error-title" class="text-lg font-bold text-slate-800 mb-2">Acesso Recusado</h3>
+                <p id="error-desc" class="text-slate-600 text-sm leading-relaxed mb-4">
+                    Acesso não liberado. Por favor, dirija-se ao Departamento de Recursos Humanos.
+                </p>
+                <div id="lock-countdown" class="hidden text-xs bg-rose-100 text-rose-800 px-3 py-1.5 rounded-lg font-bold">
+                    Bloqueado temporariamente (03:00)
+                </div>
+            </div>
+
+        </section>
+    </main>
+
+    <!-- Manual ID Contingency Keypad Modal -->
+    <div id="id-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-slate-100 flex flex-col items-center">
+
+            <div class="w-full flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2 font-bold text-slate-800">
+                    <i data-lucide="keypad" class="w-5 h-5 text-blue-600"></i>
+                    <span>Contingência por ID</span>
+                </div>
+                <button id="btn-close-id-modal" class="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <!-- ID Input Display -->
+            <div class="w-full bg-slate-100 rounded-2xl p-4 text-center mb-6 border border-slate-200">
+                <span class="text-xs text-slate-500 uppercase tracking-wider font-semibold block mb-1">Digite seu Código ID</span>
+                <div id="id-display" class="text-3xl font-black tracking-widest text-slate-800 min-h-[40px] flex items-center justify-center font-mono">_</div>
+            </div>
+
+            <!-- Numpad Grid -->
+            <div class="grid grid-cols-3 gap-3 w-full mb-4">
+                <button class="num-btn py-4 bg-slate-50 hover:bg-slate-100 active:bg-blue-100 text-slate-800 font-bold text-xl rounded-2xl border border-slate-200 transition" data-val="1">1</button>
+                <button class="num-btn py-4 bg-slate-50 hover:bg-slate-100 active:bg-blue-100 text-slate-800 font-bold text-xl rounded-2xl border border-slate-200 transition" data-val="2">2</button>
+                <button class="num-btn py-4 bg-slate-50 hover:bg-slate-100 active:bg-blue-100 text-slate-800 font-bold text-xl rounded-2xl border border-slate-200 transition" data-val="3">3</button>
+                <button class="num-btn py-4 bg-slate-50 hover:bg-slate-100 active:bg-blue-100 text-slate-800 font-bold text-xl rounded-2xl border border-slate-200 transition" data-val="4">4</button>
+                <button class="num-btn py-4 bg-slate-50 hover:bg-slate-100 active:bg-blue-100 text-slate-800 font-bold text-xl rounded-2xl border border-slate-200 transition" data-val="5">5</button>
+                <button class="num-btn py-4 bg-slate-50 hover:bg-slate-100 active:bg-blue-100 text-slate-800 font-bold text-xl rounded-2xl border border-slate-200 transition" data-val="6">6</button>
+                <button class="num-btn py-4 bg-slate-50 hover:bg-slate-100 active:bg-blue-100 text-slate-800 font-bold text-xl rounded-2xl border border-slate-200 transition" data-val="7">7</button>
+                <button class="num-btn py-4 bg-slate-50 hover:bg-slate-100 active:bg-blue-100 text-slate-800 font-bold text-xl rounded-2xl border border-slate-200 transition" data-val="8">8</button>
+                <button class="num-btn py-4 bg-slate-50 hover:bg-slate-100 active:bg-blue-100 text-slate-800 font-bold text-xl rounded-2xl border border-slate-200 transition" data-val="9">9</button>
+                <button id="btn-clear-id" class="py-4 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-sm rounded-2xl border border-rose-200 transition flex items-center justify-center">Limpar</button>
+                <button class="num-btn py-4 bg-slate-50 hover:bg-slate-100 active:bg-blue-100 text-slate-800 font-bold text-xl rounded-2xl border border-slate-200 transition" data-val="0">0</button>
+                <button id="btn-backspace-id" class="py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl border border-slate-200 transition flex items-center justify-center">
+                    <i data-lucide="delete" class="w-6 h-6"></i>
+                </button>
+            </div>
+
+            <!-- Submit Button -->
+            <button id="btn-submit-id" class="w-full py-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-lg rounded-2xl transition shadow-lg flex items-center justify-center gap-2">
+                <i data-lucide="check" class="w-6 h-6"></i>
+                Confirmar Registro
+            </button>
+        </div>
+    </div>
+
+    <!-- Application Script Files -->
+    <script src="app.js"></script>
+    <script>
+        // Render Lucide Icons
+        lucide.createIcons();
+    </script>
+</body>
+</html>
